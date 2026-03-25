@@ -3,6 +3,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { useAuth } from '../hooks/useAuth';
+import { PhotoSharingProvider } from '../hooks/usePhotoSharing';
 
 import LoginScreen from '../screens/Auth/LoginScreen';
 import RegisterScreen from '../screens/Auth/RegisterScreen';
@@ -33,27 +34,29 @@ const AppNavigator = () => {
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {user ? (
-          <>
-            <Stack.Screen name="GroupList" component={GroupListScreen} />
-            <Stack.Screen name="CreateGroup" component={CreateGroupScreen} />
-            <Stack.Screen name="JoinGroup" component={JoinGroupScreen} />
-            <Stack.Screen name="GroupDetail" component={GroupDetailScreen} />
-            <Stack.Screen name="GroupGallery" component={GroupGalleryScreen} />
-            <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
-            <Stack.Screen name="Profile" component={ProfileScreen} />
-          </>
-        ) : (
-          <>
-            <Stack.Screen name="Landing" component={LandingScreen} />
-            <Stack.Screen name="Login" component={LoginScreen} />
-            <Stack.Screen name="Register" component={RegisterScreen} />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <PhotoSharingProvider>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {user ? (
+            <>
+              <Stack.Screen name="GroupList" component={GroupListScreen} />
+              <Stack.Screen name="CreateGroup" component={CreateGroupScreen} />
+              <Stack.Screen name="JoinGroup" component={JoinGroupScreen} />
+              <Stack.Screen name="GroupDetail" component={GroupDetailScreen} />
+              <Stack.Screen name="GroupGallery" component={GroupGalleryScreen} />
+              <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
+              <Stack.Screen name="Profile" component={ProfileScreen} />
+            </>
+          ) : (
+            <>
+              <Stack.Screen name="Landing" component={LandingScreen} />
+              <Stack.Screen name="Login" component={LoginScreen} />
+              <Stack.Screen name="Register" component={RegisterScreen} />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+    </PhotoSharingProvider>
   );
 };
 

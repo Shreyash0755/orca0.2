@@ -64,16 +64,16 @@ class PhotoSharingService : Service() {
         val channelId = "photo_sharing_channel"
         val channel = NotificationChannel(
             channelId,
-            "GoGalleryLive",
+            "Orca",
             NotificationManager.IMPORTANCE_LOW
         )
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(channel)
 
         return Notification.Builder(this, channelId)
-            .setContentTitle("GoGalleryLive Active")
+            .setContentTitle("Orca Active")
             .setContentText("Auto sharing is enabled")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .build()
     }

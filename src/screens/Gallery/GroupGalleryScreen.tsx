@@ -16,12 +16,12 @@ import {
   StatusBar,
 } from 'react-native';
 import RNFS from 'react-native-fs';
-import { usePhotoSharing } from '../../hooks/usePhotoSharing';
+import { usePhotoSharingContext } from '../../hooks/usePhotoSharing';
 import { listenToGroupPhotos, Photo, deletePhotoForEveryone, deletePhotoForMe } from '../../services/photoService';
 import { FirebaseAuth } from '../../services/firebase';
 import { Group } from '../../services/groupService';
 import LinearGradient from 'react-native-linear-gradient';
-import { AlertCircle, Camera as CameraIcon, Trash2, Download, Share, Lock, ScanFace, Users } from 'lucide-react-native';
+import { AlertCircle, Camera as CameraIcon, Trash2, Download, Share, Lock, ScanFace, Users, CheckCircle2, X, CheckSquare } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
 const PHOTO_SIZE = width / 3 - 4;
@@ -29,9 +29,15 @@ const PHOTO_SIZE = width / 3 - 4;
 const PhotoItem = ({
   item,
   onPress,
+  onLongPress,
+  isSelected,
+  selectionMode,
 }: {
   item: Photo;
   onPress: () => void;
+  onLongPress: () => void;
+  isSelected: boolean;
+  selectionMode: boolean;
 }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -39,7 +45,7 @@ const PhotoItem = ({
 
   return (
     <TouchableOpacity
-      style={styles.photoContainer}
+      style={[styles.photoContainer, isSelected && styles.photoContainerSelected]}
       onPress={() => {
         if (error) {
           setError(false);
@@ -49,11 +55,13 @@ const PhotoItem = ({
           onPress();
         }
       }}
+      onLongPress={onLongPress}
+      delayLongPress={400}
     >
       {!error ? (
         <Image
           source={{ uri: `${item.url}?retry=${retryCount}` }}
-          style={styles.photo}
+          style={[styles.photo, isSelected && { opacity: 0.7 }]}
           resizeMode="cover"
           onLoadEnd={() => setLoading(false)}
           onError={() => {
@@ -72,9 +80,18 @@ const PhotoItem = ({
           <ActivityIndicator size="small" color="#3B82F6" />
         </View>
       )}
-      <Text style={styles.photoUploader} numberOfLines={1}>
-        {item.uploaderName}
-      </Text>
+      {!selectionMode && (
+        <Text style={styles.photoUploader} numberOfLines={1}>
+          {item.uploaderName}
+        </Text>
+      )}
+      {selectionMode && (
+        <View style={styles.selectOverlay}>
+          <View style={[styles.selectCircle, isSelected && styles.selectCircleActive]}>
+            {isSelected && <CheckCircle2 color="#fff" size={22} />}
+          </View>
+        </View>
+      )}
     </TouchableOpacity>
   );
 };
@@ -245,7 +262,10 @@ const PhotoViewer = ({
 const GroupGalleryScreen = ({ route, navigation }: any) => {
   const { group }: { group: Group } = route.params;
   const [photos, setPhotos] = useState<Photo[]>([]);
-  const [sharingEnabled, setSharingEnabled] = useState(false);
+  const { isSharing, activeGroupId, startSharing, stopSharing } = usePhotoSharingContext();
+  
+  const sharingEnabled = isSharing && activeGroupId === group.groupId;
+
   const [receiveOnlyMyPhotos, setReceiveOnlyMyPhotos] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -253,14 +273,13 @@ const GroupGalleryScreen = ({ route, navigation }: any) => {
   const [viewerIndex, setViewerIndex] = useState(0);
   const [downloading, setDownloading] = useState(false);
 
+  // Multi-select state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDownloading, setBatchDownloading] = useState(false);
+
   const currentUser = FirebaseAuth.currentUser;
   const currentMember = group.members[currentUser?.uid || ''];
-
-  usePhotoSharing(
-    group.groupId,
-    sharingEnabled,
-    currentMember?.name || 'Unknown'
-  );
 
   useEffect(() => {
     setLoading(true);
@@ -305,6 +324,36 @@ const GroupGalleryScreen = ({ route, navigation }: any) => {
     setViewerVisible(true);
   };
 
+  // --- Selection helpers ---
+  const enterSelectionMode = (photoId: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([photoId]));
+  };
+
+  const toggleSelection = (photoId: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(photoId)) {
+        next.delete(photoId);
+      } else {
+        next.add(photoId);
+      }
+      // Exit selection mode if nothing left
+      if (next.size === 0) setSelectionMode(false);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(filteredPhotos.map(p => p.id)));
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  // --- Single download (for viewer) ---
   const downloadPhoto = async (photo: Photo) => {
     try {
       setDownloading(true);
@@ -344,6 +393,115 @@ const GroupGalleryScreen = ({ route, navigation }: any) => {
     } finally {
       setDownloading(false);
     }
+  };
+
+  // --- Batch download ---
+  const batchDownload = async () => {
+    const selected = filteredPhotos.filter(p => selectedIds.has(p.id));
+    if (selected.length === 0) return;
+
+    try {
+      setBatchDownloading(true);
+
+      if (Number(Platform.Version) < 33) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Permission needed', 'Storage permission required');
+          setBatchDownloading(false);
+          return;
+        }
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const photo of selected) {
+        try {
+          const originalUrl = photo.url.replace(
+            '/image/upload/w_400,h_400,c_fill,q_70/',
+            '/image/upload/'
+          );
+          const fileName = `Orca_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.jpg`;
+          const downloadPath = `${RNFS.PicturesDirectoryPath}/${fileName}`;
+
+          const result = await RNFS.downloadFile({
+            fromUrl: originalUrl,
+            toFile: downloadPath,
+          }).promise;
+
+          if (result.statusCode === 200) {
+            await RNFS.scanFile(downloadPath);
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } catch {
+          failCount++;
+        }
+      }
+
+      const msg = failCount > 0
+        ? `${successCount} saved, ${failCount} failed`
+        : `${successCount} photo${successCount !== 1 ? 's' : ''} saved to gallery`;
+      Alert.alert('✅ Download Complete', msg);
+      exitSelectionMode();
+    } catch (error: any) {
+      Alert.alert('Download Failed', error.message);
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
+  // --- Batch delete ---
+  const batchDelete = () => {
+    const selected = filteredPhotos.filter(p => selectedIds.has(p.id));
+    if (selected.length === 0) return;
+
+    const hasOwned = selected.some(p => p.uploadedBy === currentUser?.uid);
+
+    const buttons: any[] = [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: `Delete for me (${selected.length})`,
+        style: 'destructive',
+        onPress: async () => {
+          for (const photo of selected) {
+            try {
+              await deletePhotoForMe(group.groupId, photo.id, currentUser?.uid || '', photo.deletedBy);
+            } catch {}
+          }
+          exitSelectionMode();
+        },
+      },
+    ];
+
+    if (hasOwned) {
+      const ownedPhotos = selected.filter(p => p.uploadedBy === currentUser?.uid);
+      buttons.push({
+        text: `Delete for everyone (${ownedPhotos.length} yours)`,
+        style: 'destructive',
+        onPress: async () => {
+          for (const photo of selected) {
+            try {
+              if (photo.uploadedBy === currentUser?.uid) {
+                await deletePhotoForEveryone(group.groupId, photo.id);
+              } else {
+                await deletePhotoForMe(group.groupId, photo.id, currentUser?.uid || '', photo.deletedBy);
+              }
+            } catch {}
+          }
+          exitSelectionMode();
+        },
+      });
+    }
+
+    Alert.alert(
+      'Delete Selected Photos',
+      `You have selected ${selected.length} photo${selected.length !== 1 ? 's' : ''}`,
+      buttons
+    );
   };
 
   return (
@@ -391,7 +549,15 @@ const GroupGalleryScreen = ({ route, navigation }: any) => {
         </View>
         <Switch
           value={sharingEnabled}
-          onValueChange={setSharingEnabled}
+          onValueChange={(val) => {
+            if (val) {
+              startSharing(group.groupId, currentMember?.name || 'Unknown');
+            } else {
+              if (activeGroupId === group.groupId) {
+                stopSharing();
+              }
+            }
+          }}
           trackColor={{ false: '#333', true: '#3B82F6' }}
           thumbColor={sharingEnabled ? '#fff' : '#888'}
         />
@@ -422,11 +588,49 @@ const GroupGalleryScreen = ({ route, navigation }: any) => {
       </View>
 
       {/* Photo Count */}
-      {filteredPhotos.length > 0 && (
+      {filteredPhotos.length > 0 && !selectionMode && (
         <Text style={styles.photoCount}>
           {filteredPhotos.length} photo{filteredPhotos.length !== 1 ? 's' : ''}
           {receiveOnlyMyPhotos ? ' with you' : ' total'}
         </Text>
+      )}
+
+      {/* Selection Toolbar */}
+      {selectionMode && (
+        <View style={styles.selectionToolbar}>
+          <View style={styles.selectionToolbarLeft}>
+            <TouchableOpacity onPress={exitSelectionMode} style={styles.selectionCancelBtn}>
+              <X color="#fff" size={20} />
+            </TouchableOpacity>
+            <Text style={styles.selectionCount}>{selectedIds.size} selected</Text>
+          </View>
+          <View style={styles.selectionToolbarRight}>
+            <TouchableOpacity onPress={selectAll} style={styles.selectionActionBtn}>
+              <CheckSquare color="#3B82F6" size={20} />
+              <Text style={styles.selectionActionText}>All</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={batchDownload}
+              style={[styles.selectionActionBtn, batchDownloading && { opacity: 0.5 }]}
+              disabled={batchDownloading || selectedIds.size === 0}
+            >
+              {batchDownloading ? (
+                <ActivityIndicator color="#4CAF50" size="small" />
+              ) : (
+                <Download color="#4CAF50" size={20} />
+              )}
+              <Text style={[styles.selectionActionText, { color: '#4CAF50' }]}>Save</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={batchDelete}
+              style={styles.selectionActionBtn}
+              disabled={selectedIds.size === 0}
+            >
+              <Trash2 color="#f44336" size={20} />
+              <Text style={[styles.selectionActionText, { color: '#f44336' }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
 
       {/* Photos Grid */}
@@ -459,13 +663,26 @@ const GroupGalleryScreen = ({ route, navigation }: any) => {
           renderItem={({ item, index }) => (
             <PhotoItem
               item={item}
-              onPress={() => openPhoto(index)}
+              onPress={() => {
+                if (selectionMode) {
+                  toggleSelection(item.id);
+                } else {
+                  openPhoto(index);
+                }
+              }}
+              onLongPress={() => {
+                if (!selectionMode) {
+                  enterSelectionMode(item.id);
+                }
+              }}
+              isSelected={selectedIds.has(item.id)}
+              selectionMode={selectionMode}
             />
           )}
           keyExtractor={(item, index) => `${item.id}_${index}`}
           numColumns={3}
           contentContainerStyle={styles.photoGrid}
-          extraData={filteredPhotos}
+          extraData={[filteredPhotos, selectedIds, selectionMode]}
           removeClippedSubviews={false}
           onRefresh={() => setRefreshKey(k => k + 1)}
           refreshing={loading}
@@ -728,6 +945,69 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  // --- Selection mode styles ---
+  photoContainerSelected: {
+    borderWidth: 2,
+    borderColor: '#3B82F6',
+  },
+  selectOverlay: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+  },
+  selectCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectCircleActive: {
+    backgroundColor: '#3B82F6',
+    borderColor: '#3B82F6',
+  },
+  selectionToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1a1a1a',
+    marginHorizontal: 12,
+    marginTop: 12,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+  },
+  selectionToolbarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  selectionToolbarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  selectionCancelBtn: {
+    padding: 4,
+  },
+  selectionCount: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  selectionActionBtn: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  selectionActionText: {
+    color: '#3B82F6',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
 
