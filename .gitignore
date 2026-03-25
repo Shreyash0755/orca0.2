@@ -1,0 +1,83 @@
+# =========================
+# Node / React Native
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Metro bundler
+.expo/
+.expo-shared/
+dist/
+build/
+
+# React Native cache
+*.hprof
+*.orig
+*.log
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Firebase (KEEP config files for team)
+# =========================
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# =========================
+# Android
+# =========================
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.keystore
+*.jks
+
+# =========================
+# iOS
+# =========================
+ios/Pods/
+ios/build/
+ios/DerivedData/
+*.xcuserstate
+*.xcuserdata/
+
+# =========================
+# macOS / Windows
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDEs / Editors
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Logs & Temp
+# =========================
+logs/
+tmp/
+temp/
+
+# =========================
+# Coverage
+# =========================
+coverage/
+
+# =========================
+# Misc
+# =========================
+*.swp
+*.swo
+
+android/app/.cxx/
